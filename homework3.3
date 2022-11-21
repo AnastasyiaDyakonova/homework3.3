@@ -1,0 +1,339 @@
+//    a.       Создайте схему будущего фрейма данных. Схема должна включать следующие атрибуты:
+//
+//    ·   id -  уникальный идентификатор посетителя сайта. Тип – последовательность чисел фиксированной длины. Данное поле не является первичным ключом.
+//
+//    ·   timestamp – дата и время события в формате unix timestamp.
+//
+//    ·   type – тип события, значение из списка (факт посещения(visit), клик по визуальному элементу страницы(click), скролл(scroll), перед на другую страницу(move)).
+//
+//    ·   page_id – id текущей страницы. Тип - последовательность чисел фиксированной длины.
+//
+//    ·   tag – каждая страница с новостью размечается редакцией специальными тегами, которые отражают тематику конкретной новости со страницы. Возможный список тематик: политика, спорт, медицина и т.д.
+//
+//    ·   sign – наличие у пользователя личного кабинета. Значения – True/False.
+//
+//      b.       Создайте датафрейм с описанной выше схемой данных.
+//
+//      c.       Наполните датафрейм данными. Пример:
+//
+//      (12345, 1667627426, "click", 101, "Sport”, False)
+import com.carrotsearch.hppc.Intrinsics.cast
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.functions.{array_contains, col, datediff, from_unixtime, hour, lit, to_date, when}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.{ArrayType, BooleanType, DataType, DateType, IntegerType, LongType, StringType, StructField, StructType, TimestampType, VarcharType}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.catalyst.ScalaReflection.universe.show
+
+object newhome {
+  def main(Args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .master("local[1]")
+      .appName("Spark")
+      .getOrCreate()
+
+    import spark.implicits._
+    val data = Seq(Row(12345,1668815868,List("visit", "click", "scroll", "move"),101,"Medicine",true),
+      Row(12346,1668815860,List("visit", "click", "scroll"),105,"book",false),
+      Row(12347,1668725860,List("visit", "click"),103,"Sport",true),
+      Row(12348,1668812260,List("visit", "click", "scroll", "move"),101,"Medicine",false),
+      Row(12349,1668856788,List("visit"),104,"history",false),
+      Row(12346,1668775345,List("visit", "click", "scroll"),106,"politics",true),
+      Row(12348,1668454351,List("visit"),103,"Sport",false),
+      Row(12352,1668454544,List("visit", "click"),108,"home",true),
+      Row(12346,1668514498,List("visit", "click", "scroll", "move"),106,"politics",false),
+      Row(12345,1668141544,List("visit"),102,"Music",false),
+      Row(12347,1668484515,List("visit", "click", "scroll"),104,"history",true),
+      Row(12347,1668484545,List("visit", "click"), 104,"history",false),
+      Row(12346,1668118748,List("visit"),106,"politics",false),
+      Row(12348,1668185155,List("visit"),104,"history",false),
+      Row(12359,1668774748,List("visit"),102,"Music",true),
+      Row(12347,1668858548,List("visit", "click", "scroll", "move"),102,"Music",false),
+      Row(12346,1668415545,List("visit", "click"),105,"book",false),
+      Row(12348,1668584848,List("visit", "click", "scroll"),106,"politics",true),
+      Row(12349,1668858225,List("visit"),107,"flowers",false),
+      Row(12347,1668489523,List("visit"),102,"Music",true),
+      Row(12346,1668844850,List("visit", "click", "scroll"),105,"book",true),
+      Row(12345,1668484155,List("visit", "click"),101,"Medicine",false),
+      Row(12347,1668147875,List("visit", "click", "scroll"),103,"Sport",false),
+      Row(12349,1668849845,List("visit", "click", "scroll", "move"),101,"Medicine",true),
+      Row(12345,1668151514,List("visit", "click"),106,"politics",false))
+
+    val shem = StructType(Array(
+      StructField("id",IntegerType,nullable = true),
+      StructField("timestamp",IntegerType,nullable = true),
+      StructField("type",ArrayType(StringType),nullable = true),
+      StructField("page_id",IntegerType,nullable = true),
+      StructField("tag",StringType,nullable = true),
+      StructField("sign",BooleanType,nullable = true)))
+
+
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(data), shem)
+
+//    Решите следующие задачи:
+//
+//    ·   Вывести топ-5 самых активных посетителей сайта
+
+   df.filter(array_contains(df("type"),  "visit"))
+      .filter(array_contains(df("type"),  "click"))
+      .filter(array_contains(df("type"),  "scroll"))
+      .filter(array_contains(df("type"),  "move"))
+      .show(5)	 
+
+//·   Посчитать процент посетителей, у которых есть ЛК
+
+    val count_1 = df.count()
+    val count_2 = df.where(df("sign") === true).count()
+    println("Процент посетителей, у которых есть ЛК: " + count_2*100/count_1 + "%")
+
+//Вывести топ-5 страниц сайта по показателю среднего кол-ва кликов на данной странице
+
+    df.filter(array_contains(df("type"), "click"))
+      .groupBy(df("page_id"))
+      .count()
+      .withColumnRenamed("count", "n")
+      .orderBy(col("n").desc)
+      .show(5)
+	  
+//  Добавьте столбец к фрейму данных со значением временного диапазона в рамках суток с размером окна – 4 часа(0-4, 4-8, 8-12 и т.д.)
+
+    df = df.select('id, 'timestamp, 'type, 'page_id, 'tag, 'sign,
+      //from_unixtime('timestamp, "yyyy.MM.dd HH:mm:ss").alias("timestamp_formatted"),
+      from_unixtime('timestamp, "HH").alias("timestamp_period"))
+
+    df.withColumn("timestamp_period",
+      when(col("timestamp_period").cast(IntegerType) >= 0 &&  col("timestamp_period").cast(IntegerType) < 4, "0-4")
+        .when(col("timestamp_period").cast(IntegerType) >= 4 &&  col("timestamp_period").cast(IntegerType) <8 , "4-8")
+        .when(col("timestamp_period").cast(IntegerType) >= 8 &&  col("timestamp_period").cast(IntegerType) < 12, "8-12")
+        .when(col("timestamp_period").cast(IntegerType) >= 12 &&  col("timestamp_period").cast(IntegerType) < 16, "12-16")
+        .when(col("timestamp_period").cast(IntegerType) >= 16 &&  col("timestamp_period").cast(IntegerType) < 20, "16-20")
+        .when(col("timestamp_period").cast(IntegerType) >= 20 &&  col("timestamp_period").cast(IntegerType) < 24, "20-24")
+        .otherwise("unknown"))
+        .show()
+
+//·   Выведите временной промежуток на основе предыдущего задания, в течение которого было больше всего активностей на сайте.
+
+    val countTimestampPeriod = df.withColumn("timestamp_period",
+      when(col("timestamp_period").cast(IntegerType) >= 0 &&  col("timestamp_period").cast(IntegerType) < 4, "0-4")
+        .when(col("timestamp_period").cast(IntegerType) >= 4 &&  col("timestamp_period").cast(IntegerType) <8 , "4-8")
+        .when(col("timestamp_period").cast(IntegerType) >= 8 &&  col("timestamp_period").cast(IntegerType) < 12, "8-12")
+        .when(col("timestamp_period").cast(IntegerType) >= 12 &&  col("timestamp_period").cast(IntegerType) < 16, "12-16")
+        .when(col("timestamp_period").cast(IntegerType) >= 16 &&  col("timestamp_period").cast(IntegerType) < 20, "16-20")
+        .when(col("timestamp_period").cast(IntegerType) >= 20 &&  col("timestamp_period").cast(IntegerType) < 24, "20-24")
+        .otherwise("unknown"))
+        .groupBy("timestamp_period")
+        .count()
+        .orderBy(col("count").desc)
+    countTimestampPeriod.select("timestamp_period").show(1)
+	
+//	    ·   Создайте второй фрейм данных, который будет содержать информацию о ЛК посетителя сайта со следующим списком атрибутов
+//
+//    1.       Id – уникальный идентификатор личного кабинета
+//
+//    2.       User_id – уникальный идентификатор посетителя   !!!!!!!
+//
+//    3.       ФИО посетителя
+//
+//    4.       Дата создания ЛК
+
+	val data2 = Seq(
+		  Row(1, 12345, "Воронина Алена Алексеевна", "2022-01-02"),
+		  Row(2, 12346, "Иванов Иван Иванович", "2022-03-22"),
+		  Row(3, 12347, "Блинова Елена Александровна", "2022-04-15"),
+		  Row(4, 12348, "Давыдова Ирина Вениаминовна", "2022-01-10"),
+		  Row(5, 12349, "Трошин Денис Дмитриевич", "2022-04-18"),
+		  Row(6, 12352, "Афонин Федор Николаевич", "2022-03-02"),
+		  Row(7, 12359, "Землянская Ольга Петровна", "2022-05-23"),
+		  Row(8, 12360, "Авдонин Эдуард Кузьмич", "2022-03-12"),
+		  Row(9, 12382, "Теплякова Адель Петровна", "2022-05-09"))
+		  
+	val shem2 = StructType(Array(
+      StructField("id",IntegerType,nullable = true),
+      StructField("User_id",IntegerType,nullable = true),
+      StructField("FIO",StringType,nullable = true),
+      StructField("data_created",StringType,nullable = true)))
+	
+	val df2 = spark.createDataFrame(spark.sparkContext.parallelize(data2), shem2)
+	df2.show()
+
+
+
+//
+//    ·   Вывести фамилии посетителей, которые читали хотя бы одну новость про спорт.
+
+    df.where(col("tag") === "Sport")
+      .join(df2, df("id") === df2("User_id"), "left")
+      .show()
+	  
+//
+//    ·   Выведите 10% ЛК, у которых максимальная разница между датой создания ЛК и датой последнего посещения.
+
+    df = df.select('id, 'timestamp, 'type, 'page_id, 'tag, 'sign,
+      from_unixtime('timestamp, "yyyy-MM-dd").cast(DateType).alias("timestamp_formatted"))
+      //from_unixtime('timestamp, "HH").alias("timestamp_period"))
+
+    df2 = df2.withColumn("sex",
+      when(col("FIO") === "Трошин Денис Дмитриевич" || col("FIO") === "Иванов Иван Иванович" || col("FIO") === "Афонин Федор Николаевич" || col("FIO") === "Авдонин Эдуард Кузьмич", "m")
+        .otherwise("f"))
+
+    val n = ceil(df2.count()*0.1).toInt
+    df.join(df2, df("id")===df2("User_id"), "left")
+      .select(df2("id"), datediff(col("timestamp_formatted"), to_date(col("data_created")))
+      .as("difference"))
+      .groupBy("id")
+      .max("difference")
+      .orderBy(col("max(difference)").desc)
+      .show(n)
+
+
+//    ·   Вывести топ-5 страниц, которые чаще всего посещают мужчины и топ-5 страниц, которые посещают чаще женщины.
+
+	df2 = df2.withColumn("sex",
+      when(col("FIO") === "Трошин Денис Дмитриевич" || col("FIO") === "Иванов Иван Иванович" || col("FIO") === "Афонин Федор Николаевич" || col("FIO") === "Авдонин Эдуард Кузьмич", "m")
+        .otherwise("f"))
+
+    df.join(df2, df("id") === df2("User_id"), "left")
+      .where(col("sex") === "m")
+      .groupBy(col("tag"))
+      .count()
+      .orderBy(col("count").desc)
+      .show(5)
+	  
+	  df.join(df2, df("id") === df2("User_id"), "left")
+      .where(col("sex") === "f")
+      .groupBy(col("tag"))
+      .count()
+      .orderBy(col("count").desc)
+      .show(5)
+	  
+  }
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------------
+//e.       Создайте в Postgres таблицы аналогичной структуры и выполните следующие задания с помощью Spark.
+//Создайте витрину данных в Postgres со следующим содержанием
+    //1.       Id посетителя
+    //2.       Возраст посетителя
+    //3.       Пол посетителя (постарайтесь описать логику вычисления пола в отдельной пользовательской функции)
+    //4.       Любимая тематика новостей
+    //5.       Любимый временной диапазон посещений
+    //6.       Id личного кабинета
+    //7.       Разница в днях между созданием ЛК и датой последнего посещения. (-1 если ЛК нет)
+    //8.       Общее кол-во посещений сайта
+    //9.       Средняя длина сессии(сессией считаем временной промежуток, который охватывает последовательность событий, которые происходили подряд с разницей не более 5 минут).
+    //10.   Среднее кол-во активностей в рамках одной сессии
+
+import org.apache.spark.sql.{Row, SparkSession}
+
+object newhome {
+  def main(Args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .master("local[1]")
+      .appName("Spark")
+      .getOrCreate()
+  spark.sparkContext.setLogLevel("ERROR")
+
+    val jdbsDF = spark.read
+      .format("jdbc")
+      .option("url", "jdbc:postgresql://localhost:5433/postgres")
+      .option("dbtable", "df")
+      .option("user", "postgres")
+      .option("password", "postgres")
+      .load()
+	  
+	val jdbsDF2 = spark.read
+      .format("jdbc")
+      .option("url", "jdbc:postgresql://localhost:5433/postgres")
+      .option("dbtable", "df2")
+      .option("user", "postgres")
+      .option("password", "postgres")
+      .load()
+
+//CREATE TABLE df("id" INT, "timestamp" INT, "type" VARCHAR[], "page_id" INT, "tag" VARCHAR, "sign" BOOL);
+    //INSERT INTO df("id", "timestamp", "type", "page_id", "tag", "sign")
+    //VALUES(12345, 1668815868,'{"visit", "click", "scroll", "move"}',101,'Medicine',true),
+    //      (12346,1668815860,'{"visit", "click", "scroll"}',105,'book',false),
+    //      (12347,1668725860,'{"visit", "click"}',103,'Sport',true),
+    //      (12348,1668812260,'{"visit", "click", "scroll", "move"}',101,'Medicine',false),
+    //      (12349,1668856788,'{"visit"}',104,'history',false),
+    //      (12346,1668775345,'{"visit", "click", "scroll"}',106,'politics',true),
+    //      (12348, 1668454351,'{"visit"}', 103,'Sport',false),
+    //      (12352,1668454544,'{"visit", "click"}',108,'home',true),
+    //      (12346,1668514498,'{"visit", "click", "scroll", "move"}',106,'politics',false),
+    //      (12345,1668141544,'{"visit"}',102,'Music',false),
+    //      (12347,1668484515,'{"visit", "click", "scroll"}',104,'history',true),
+    //      (12347,1668484545,'{"visit", "click"}', 104,'history',false),
+    //      (12346,1668118748,'{"visit"}',106,'politics',false),
+    //      (12348,1668185155,'{"visit"}',104,'history',false),
+    //      (12359,1668774748,'{"visit"}',102,'Music',true),
+    //      (12347,1668858548,'{"visit", "click", "scroll", "move"}',102,'Music',false),
+    //      (12346,1668415545,'{"visit", "click"}',105,'book',false),
+    //      (12348,1668584848,'{"visit", "click", "scroll"}',106,'politics',true),
+    //      (12349,1668858225,'{"visit"}',107,'flowers',false),
+    //      (12347,1668489523,'{"visit"}',102,'Music',true),
+    //      (12346,1668844850,'{"visit", "click", "scroll"}',105,'book',true),
+    //      (12345,1668484155,'{"visit", "click"}',101,'Medicine',false),
+    //      (12347,1668147875,'{"visit", "click", "scroll"}',103,'Sport',false),
+    //      (12349,1668849845,'{"visit", "click", "scroll", "move"}',101,'Medicine',true),
+    //      (12345,1668151514,'{"visit", "click"}',106,'politics',false);
+	
+//CREATE TABLE df2 ("id" INT,"User_id" INT, "FIO" VARCHAR, "date_of_birthday" DATE, "data_created" VARCHAR);
+//    INSERT INTO df2("id", "User_id", "FIO", "date_of_birthday", "data_created")	  
+//    VALUES 	  (1, 12345, 'Воронина Алена Алексеевна', '1993-08-25', '2022-01-02'),
+//    		  (2, 12346, 'Иванов Иван Иванович', '1987-09-27','2022-03-22'),
+//    		  (3, 12347, 'Блинова Елена Александровна', '2001-07-19', '2022-04-15'),
+//    		  (4, 12348, 'Давыдова Ирина Вениаминовна', '1967-12-07', '2022-01-10'),
+//    		  (5, 12349, 'Трошин Денис Дмитриевич', '1983-01-17', '2022-04-18'),
+//    		  (6, 12352, 'Афонин Федор Николаевич', '1979-10-03', '2022-03-02'),
+//    		  (7, 12359, 'Землянская Ольга Петровна', '1994-12-11', '2022-05-23'),
+//    		  (8, 12360, 'Авдонин Эдуард Кузьмич', '2001-01-08', '2022-03-12'),
+//    		  (9, 12382, 'Теплякова Адель Петровна', '2000-10-13', '2022-05-09')
+
+
+	jdbsDF.createOrReplaceTempView("df")
+    jdbsDF2.createOrReplaceTempView("df2")
+
+    val sql = spark.sql(
+    "select df.id, timestamp, type, page_id, tag, sign, df2.id as id_l_k, User_id as user_id, FIO as fio, date_of_birthday, data_created, to_timestamp(timestamp) as timestamp2, hour(to_timestamp(timestamp)) as timestamp_hour from df left join df2 on df.id = df2.User_id")
+
+    sql.createOrReplaceTempView("sqll")
+
+   val sql1 = spark.sql(
+     """
+       select
+         distinct user_id,
+         date_of_birthday,
+          CASE
+             when "fio" = 'Трошин Денис Дмитриевич' or "fio" = 'Иванов Иван Иванович' or "fio" = 'Авдонин Эдуард Кузьмич' or "fio" = 'Афонин Федор Николаевич' then 'm'
+             else 'f'
+          end sex,
+          tag,
+          count(tag) over (partition by tag, user_id) as count_tag,
+         case when timestamp_hour <4 and timestamp_hour >=0 then '0-4'
+              when timestamp_hour <8 and timestamp_hour >=4 then '4-8'
+              when timestamp_hour <12 and timestamp_hour >=8 then '8-12'
+              when timestamp_hour <16 and timestamp_hour >=12 then '12-16'
+              when timestamp_hour <20 and timestamp_hour >=16 then '16-20'
+              when timestamp_hour <24 and timestamp_hour >=20 then '20-24'
+         else 'no'
+         end as time_period,
+         id_l_k,
+         cast((timestamp - unix_timestamp(to_date(data_created, 'yyyy-mm-dd')))/86400 as integer) as datediff,
+         (select count(timestamp) from df ) as count_vizit
+       from sqll
+       order by user_id
+       """)
+    sql1.show()
+    sql1.printSchema()
+
+
+
+  }
+}
+
+
+
+
+
